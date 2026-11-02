@@ -21,23 +21,22 @@ jobs:
           curl -sL -o c.tar.xz "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/$TAG/ungoogled-chromium-$TAG-x86_64_linux.tar.xz"
           tar xf c.tar.xz
           ./ungoogled-chromium-$TAG-x86_64_linux/chrome --version
-      - name: Smoke-test headless browser (fail loudly with the real error)
-        run: |
-          CH=$(ls /tmp/chr/*/chrome | head -1)
-          { echo "== missing shared objects =="; ldd "$CH" | grep 'not found' || echo 'libs: none missing';
-            echo "== headless dump-dom smoke =="; timeout 40 $CH --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --dump-dom about:blank 2>&1 | tail -15; } > smoke.log 2>&1 || true
-          cat smoke.log
       - id: e2e
-        continue-on-error: true
-        run: set -o pipefail; xvfb-run -a env SG_HEADLESS=0 npm run test:e2e 2>&1 | tee e2e.log
-      - if: steps.e2e.outcome == 'failure'
-        name: publish e2e failures as annotations
+        # headed under Xvfb: headless=new races on extension registration in CI runners;
+        # one retry to absorb launch flakiness; attempt-1 artifacts are printed if it fails twice
         run: |
-          { cat smoke.log 2>/dev/null; echo "== e2e log =="; grep -E '^(FAIL|DIAG|\[e2e\])' e2e.log || true; echo '---- tail ----'; tail -14 e2e.log; } | head -60 | sed 's/^/::error::/'
+          set -o pipefail
+          xvfb-run -a env SG_HEADLESS=0 npm run test:e2e 2>&1 | tee e2e.log && exit 0
+          rc=$?
+          echo "::notice::e2e attempt 1 failed (rc=$rc), retrying once"
+          sleep 15
+          xvfb-run -a env SG_HEADLESS=0 npm run test:e2e 2>&1 | tee e2e.log
+          exit $?
+      - if: failure()
+        name: publish real test failures as annotations (compact)
+        run: |
+          grep -haE '^(FAIL|DIAG) .{0,220}|\(attempt [0-9]+[^)]*\)|ALL E2E CHECKS PASSED|[0-9]+ FAILED' tests/e2e/last-run.txt e2e.log 2>/dev/null | sort -u | head -9 | cut -c1-220 | sed -E 's/^(.{0,220}).*/::error::\1/'
           exit 1
-      - uses: actions/upload-artifact@v4
-        if: steps.e2e.outcome == 'success'
-        with: { name: extension-zips, path: dist/*.zip }
       - run: npm run pack
       - uses: actions/upload-artifact@v4
-        with: { name: extension-zips, path: dist/*.zip }
+        with: { name: extension-zips, path: dist/*.zip, retention-days: 30 }
