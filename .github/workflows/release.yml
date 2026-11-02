@@ -1,0 +1,23 @@
+name: Release
+on:
+  push: { tags: ['v*'] }
+permissions: { contents: write }
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg zip
+      - run: npm ci
+      - run: npm run fixtures   # unit tests serve the local fixtures
+      - run: npm run build && npm test
+      - run: npm run pack
+      - name: Resolve release notes for this tag
+        run: cp "$(ls docs/releases/${GITHUB_REF_NAME}.md 2>/dev/null || echo docs/releases/template.md)" release-notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          body_path: release-notes.md
+          generate_release_notes: true

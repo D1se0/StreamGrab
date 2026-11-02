@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<link rel="stylesheet" href="popup.css"><title>StreamGrab</title></head>
+<body data-view="videos">
+<header>
+  <div class="brand"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16"/></svg><b>StreamGrab</b></div>
+  <nav id="nav" role="tablist">
+    <button class="tab active" id="tabVids" data-view="videos" role="tab"><span data-i18n="videos">Videos</span></button>
+    <button class="tab" id="tabHist" data-view="history" role="tab"><span data-i18n="history">History</span><span id="hcount" class="chip" hidden></span></button>
+  </nav>
+</header>
+<div id="viewVids" class="view">
+  <div class="pagebar"><span class="pbtitle" data-i18n="thisPage">This page</span><button id="clear" class="ghost" data-i18n="clear">Clear</button></div>
+  <main id="list"></main>
+  <div id="empty" hidden><p id="emptyMsg"></p></div>
+</div>
+<div id="viewHist" class="view">
+  <div class="pagebar">
+    <input id="hsearch" type="search" data-i18n-ph="searchPh" placeholder="Search history…">
+    <button id="hclear" class="ghost danger" data-i18n="hClear">Clear all</button>
+  </div>
+  <main id="hlist"></main>
+  <div id="hempty" hidden><p data-i18n="noHist">No downloads yet — videos you grab will appear here.</p></div>
+</div>
+<footer id="footVids"><label class="sw lim"><span data-i18n="limit">Size limit</span><select id="maxGB"><option value="0" data-i18n="nolimit">No limit</option><option value="1">1 GB</option><option value="2">2 GB</option><option value="4">4 GB</option><option value="8">8 GB</option><option value="16">16 GB</option></select></label><label class="sw"><input type="checkbox" id="auto"><span data-i18n="auto">Auto-download best quality when detected</span></label></footer>
+<footer id="footHist" hidden><span id="hstats" class="sub"></span></footer>
+<script src="popup.js"></script></body></html>

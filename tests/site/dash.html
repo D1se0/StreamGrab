@@ -1,0 +1,3 @@
+<!doctype html><meta charset="utf-8"><title>DASH demo</title>
+<video id="v" muted></video>
+<script>fetch('/dash/manifest.mpd').then(r => r.text()); document.getElementById('v').src = URL.createObjectURL(new MediaSource());</script>

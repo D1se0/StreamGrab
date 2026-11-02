@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Demo Player – StreamGrab test</title>
+<video id="v" muted controls width="480"></video>
+<script src="hls.min.js"></script>
+<script>
+  const q = new URLSearchParams(location.search); const src = q.get('src') || '/hls_ts/master.m3u8';
+  const v = document.getElementById('v');
+  // A genuine MSE/blob: video, like real streaming sites
+  const hls = new Hls(); hls.loadSource(src); hls.attachMedia(v); hls.on(Hls.Events.ERROR, () => {});
+  v.play().catch(() => {});
+</script>

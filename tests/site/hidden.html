@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>Hidden manifest</title>
+<video id="v" muted></video>
+<script>
+  // Manifest served from an extension-less URL with a generic content-type: only body sniffing can spot it.
+  fetch('/api/getstream?id=42').then(r => r.text()).then(t => { window.__got = t.length; });
+  const x = new XMLHttpRequest(); x.open('GET', '/api/getstream2?id=43'); x.send();
+  document.getElementById('v').src = URL.createObjectURL(new MediaSource());
+</script>

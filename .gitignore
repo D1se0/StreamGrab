@@ -1,0 +1,10 @@
+node_modules/
+dist/
+tests/fixtures/
+tests/e2e/last-run.txt
+tests/e2e/popup.png
+*.zip
+.DS_Store
+!tools/*.zip
+website/dist/
+!.gitignore
