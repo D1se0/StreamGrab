@@ -62,8 +62,8 @@ function MockPopup({ c }) {
           <div className="mock-status"><span className="spin">◌</span> {c.mockDownloading}… <b>{c.mockPct}</b></div>
         </div>
         <div className="mock-hist">
-          <span className="mock-chip">🎞 {c.mockHist1}</span>
-          <span className="mock-chip">🎞 {c.mockHist2}</span>
+          <span className="mock-chip">{c.mockHist1}</span>
+          <span className="mock-chip">{c.mockHist2}</span>
         </div>
       </div>
     </div>
@@ -73,7 +73,8 @@ function MockPopup({ c }) {
 function Hero({ t }) {
   return (
     <header className="hero" id="top">
-      <div className="bg-blobs" aria-hidden="true"><i /><i /><i /></div>
+      <div className="bg-aura" aria-hidden="true" />
+      <div className="aura2" aria-hidden="true" />
       <div className="bg-grid" aria-hidden="true" />
       <div className="container hero-inner">
         <div className="hero-copy">
@@ -116,7 +117,7 @@ function How({ t }) {
           {t.how.steps.map(([icon, title, text], i) => (
             <Reveal key={title} delay={i * 120} className="step">
               <div className="step-card">
-                <div className="step-icon">{icon}</div>
+                <div className="step-icon" aria-hidden="true">{String(i + 1).padStart(2, '0')}</div>
                 <h3>{String(i + 1).padStart(2, '0')} · {title}</h3>
                 <p>{text}</p>
               </div>
@@ -124,7 +125,7 @@ function How({ t }) {
             </Reveal>
           ))}
         </div>
-        <Reveal delay={200}><p className="fidelity">✅ ffprobe: {t.how.fidelity}</p></Reveal>
+        <Reveal delay={200}><p className="fidelity">{t.how.fidelity}</p></Reveal>
       </div>
     </section>
   );
@@ -172,7 +173,7 @@ function Install({ t }) {
             </div>
           </Reveal>
         </div>
-        <Reveal delay={220}><p className="muted-note">⚙️ {t.install.note}</p></Reveal>
+        <Reveal delay={220}><p className="muted-note">{t.install.note}</p></Reveal>
       </div>
     </section>
   );
@@ -204,7 +205,7 @@ function Footer({ t }) {
   return (
     <footer className="footer">
       <div className="container footer-inner">
-        <span className="logo">⬇️ StreamGrab</span>
+        <span className="logo"><span className="logo-mark" aria-hidden="true">⬇</span> StreamGrab</span>
         <span>{t.footer.madeWith}</span>
         <div className="footer-links">
           <a href={REPO} target="_blank" rel="noreferrer">{t.footer.repo}</a>
