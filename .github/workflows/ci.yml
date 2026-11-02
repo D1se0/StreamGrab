@@ -20,12 +20,17 @@ jobs:
           TAG=$(curl -sI https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/latest | grep -i ^location | sed 's#.*/tag/##' | tr -d '\r')
           curl -sL -o c.tar.xz "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/$TAG/ungoogled-chromium-$TAG-x86_64_linux.tar.xz"
           tar xf c.tar.xz
-      - run: npm run test:e2e 2>&1 | tee e2e.log; test ${PIPESTATUS[0]} -eq 0
-      - if: always()
-        run: tail -60 e2e.log >> $GITHUB_STEP_SUMMARY || true
+      - id: e2e
+        continue-on-error: true
+        run: set -o pipefail; npm run test:e2e 2>&1 | tee e2e.log
+      - if: steps.e2e.outcome == 'failure'
+        name: publish e2e failures as annotations
+        run: |
+          { grep -E '^(FAIL|DIAG|\[e2e\])' e2e.log || true; echo '---- tail ----'; tail -18 e2e.log; } | head -46 | sed 's/^/::error::/'
+          exit 1
       - uses: actions/upload-artifact@v4
-        if: always()
-        with: { name: e2e-log, path: e2e.log }
+        if: steps.e2e.outcome == 'success'
+        with: { name: extension-zips, path: dist/*.zip }
       - run: npm run pack
       - uses: actions/upload-artifact@v4
         with: { name: extension-zips, path: dist/*.zip }
