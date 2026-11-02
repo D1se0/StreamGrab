@@ -33,7 +33,7 @@ async function launchBrowser() {
   for (let attempt = 1; attempt <= 5; attempt++) {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-prof-'));
     const browser = await puppeteer.launch({
-      executablePath: CHROME, headless: 'new', userDataDir: profile,
+      executablePath: CHROME, headless: process.env.SG_HEADLESS === '0' ? false : 'new', userDataDir: profile,
       args: ['--no-sandbox', `--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--no-first-run', '--autoplay-policy=no-user-gesture-required', '--disable-gpu'],
     });
     const cdp = await browser.target().createCDPSession();
