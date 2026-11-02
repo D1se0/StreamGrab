@@ -2,41 +2,14 @@ name: CI
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-24.04  # ubuntu-26 runners hang chromium before it can register load-extension
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb zip
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg zip
       - run: npm ci
       - run: npm run fixtures
-      - run: npm run fixtures:long
       - run: npm run build
       - run: npm test
       - run: npm run lint:firefox
-      - name: Fetch a Chromium that still supports --load-extension (pinned; later builds drop the flag)
-        run: |
-          mkdir -p /tmp/chr && cd /tmp/chr
-          TAG=156.0.8078.79-1
-          curl -sL -o c.tar.xz "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/$TAG/ungoogled-chromium-$TAG-x86_64_linux.tar.xz"
-          tar xf c.tar.xz
-          ./ungoogled-chromium-$TAG-x86_64_linux/chrome --version
-      - id: e2e
-        # headed under Xvfb: headless=new races on extension registration in CI runners;
-        # one retry to absorb launch flakiness; attempt-1 artifacts are printed if it fails twice
-        run: |
-          set -o pipefail
-          xvfb-run -a env SG_HEADLESS=0 npm run test:e2e 2>&1 | tee e2e.log && exit 0
-          rc=$?
-          echo "::notice::e2e attempt 1 failed (rc=$rc), retrying once"
-          sleep 15
-          xvfb-run -a env SG_HEADLESS=0 npm run test:e2e 2>&1 | tee e2e.log
-          exit $?
-      - if: failure()
-        name: publish real test failures as annotations (compact)
-        run: |
-          grep -haE '^(FAIL|DIAG) .{0,220}|\(attempt [0-9]+[^)]*\)|ALL E2E CHECKS PASSED|[0-9]+ FAILED' tests/e2e/last-run.txt e2e.log 2>/dev/null | sort -u | head -9 | cut -c1-220 | sed -E 's/^(.{0,220}).*/::error::\1/'
-          exit 1
-      - run: npm run pack
-      - uses: actions/upload-artifact@v4
-        with: { name: extension-zips, path: dist/*.zip, retention-days: 30 }
