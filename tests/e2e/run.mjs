@@ -34,8 +34,12 @@ async function launchBrowser() {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sg-prof-'));
     const browser = await puppeteer.launch({
       executablePath: CHROME, headless: process.env.SG_HEADLESS === '0' ? false : 'new', userDataDir: profile,
-      args: ['--no-sandbox', `--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--no-first-run', '--autoplay-policy=no-user-gesture-required', '--disable-gpu'],
+      args: ['--no-sandbox', `--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--no-first-run', '--autoplay-policy=no-user-gesture-required', '--disable-gpu', '--enable-logging=stderr'],
+      pipe: false,
     });
+    const dbgLines = [];
+    const stderr = browser.process?.()?.stderr; // capture the browser's own boot log for the failure annotation
+    if (stderr) stderr.on('data', (chunk) => { if (dbgLines.length < 400) dbgLines.push(chunk.toString()); });
     const cdp = await browser.target().createCDPSession();
     await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir });
     const sw = await browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().endsWith('background.js'), { timeout: 15000 }).catch(() => null);
@@ -60,6 +64,7 @@ async function launchBrowser() {
       if (sw2) return { browser, extId, sw: sw2 };
     }
     console.log(`(attempt ${attempt}: chromium did not register the extension, relaunching)`);
+    if (attempt === 5) console.log('DIAG chromium stderr tail:\n' + dbgLines.slice(-15));
     await browser.close().catch(() => {});
     await sleep(1000);
   }

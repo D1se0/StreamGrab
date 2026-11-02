@@ -2,7 +2,7 @@ name: CI
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ubuntu-26 runners hang chromium before it can register load-extension
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
