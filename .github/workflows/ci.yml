@@ -21,6 +21,15 @@ jobs:
           curl -sL -o c.tar.xz "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/$TAG/ungoogled-chromium-$TAG-x86_64_linux.tar.xz"
           tar xf c.tar.xz
           ./ungoogled-chromium-$TAG-x86_64_linux/chrome --version
+      - name: Smoke-test headless browser (fail loudly with the real error)
+        run: |
+          CH=$(ls /tmp/chr/*/chrome | head -1)
+          echo "== missing shared objects =="
+          MISSING=$(ldd "$CH" | grep 'not found' || true)
+          echo "${MISSING:-none}"
+          echo "== headless dump-dom smoke =="
+          timeout 40 $CH --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --dump-dom about:blank 2>&1 | tail -12
+          echo "smoke_exit=$?"
       - id: e2e
         continue-on-error: true
         run: set -o pipefail; npm run test:e2e 2>&1 | tee e2e.log
