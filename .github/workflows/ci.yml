@@ -14,12 +14,13 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run lint:firefox
-      - name: Fetch a Chromium that still supports --load-extension
+      - name: Fetch a Chromium that still supports --load-extension (pinned; later builds drop the flag)
         run: |
           mkdir -p /tmp/chr && cd /tmp/chr
-          TAG=$(curl -sI https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/latest | grep -i ^location | sed 's#.*/tag/##' | tr -d '\r')
+          TAG=156.0.8078.79-1
           curl -sL -o c.tar.xz "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/$TAG/ungoogled-chromium-$TAG-x86_64_linux.tar.xz"
           tar xf c.tar.xz
+          ./ungoogled-chromium-$TAG-x86_64_linux/chrome --version
       - id: e2e
         continue-on-error: true
         run: set -o pipefail; npm run test:e2e 2>&1 | tee e2e.log
