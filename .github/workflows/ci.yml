@@ -24,19 +24,16 @@ jobs:
       - name: Smoke-test headless browser (fail loudly with the real error)
         run: |
           CH=$(ls /tmp/chr/*/chrome | head -1)
-          echo "== missing shared objects =="
-          MISSING=$(ldd "$CH" | grep 'not found' || true)
-          echo "${MISSING:-none}"
-          echo "== headless dump-dom smoke =="
-          timeout 40 $CH --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --dump-dom about:blank 2>&1 | tail -12
-          echo "smoke_exit=$?"
+          { echo "== missing shared objects =="; ldd "$CH" | grep 'not found' || echo 'libs: none missing';
+            echo "== headless dump-dom smoke =="; timeout 40 $CH --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --dump-dom about:blank 2>&1 | tail -15; } > smoke.log 2>&1 || true
+          cat smoke.log
       - id: e2e
         continue-on-error: true
         run: set -o pipefail; npm run test:e2e 2>&1 | tee e2e.log
       - if: steps.e2e.outcome == 'failure'
         name: publish e2e failures as annotations
         run: |
-          { grep -E '^(FAIL|DIAG|\[e2e\])' e2e.log || true; echo '---- tail ----'; tail -18 e2e.log; } | head -46 | sed 's/^/::error::/'
+          { cat smoke.log 2>/dev/null; echo "== e2e log =="; grep -E '^(FAIL|DIAG|\[e2e\])' e2e.log || true; echo '---- tail ----'; tail -14 e2e.log; } | head -60 | sed 's/^/::error::/'
           exit 1
       - uses: actions/upload-artifact@v4
         if: steps.e2e.outcome == 'success'
