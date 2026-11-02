@@ -20,7 +20,12 @@ jobs:
           TAG=$(curl -sI https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/latest | grep -i ^location | sed 's#.*/tag/##' | tr -d '\r')
           curl -sL -o c.tar.xz "https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/$TAG/ungoogled-chromium-$TAG-x86_64_linux.tar.xz"
           tar xf c.tar.xz
-      - run: npm run test:e2e
+      - run: npm run test:e2e 2>&1 | tee e2e.log; test ${PIPESTATUS[0]} -eq 0
+      - if: always()
+        run: tail -60 e2e.log >> $GITHUB_STEP_SUMMARY || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: e2e-log, path: e2e.log }
       - run: npm run pack
       - uses: actions/upload-artifact@v4
         with: { name: extension-zips, path: dist/*.zip }
