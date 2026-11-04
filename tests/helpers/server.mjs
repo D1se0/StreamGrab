@@ -1,10 +1,11 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-const MIME = { '.m3u8': 'application/vnd.apple.mpegurl', '.mpd': 'application/dash+xml', '.ts': 'video/mp2t', '.m4s': 'video/iso.segment', '.mp4': 'video/mp4', '.html': 'text/html', '.js': 'text/javascript' };
+const MIME = { '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.m3u8': 'application/vnd.apple.mpegurl', '.mpd': 'application/dash+xml', '.ts': 'video/mp2t', '.m4s': 'video/iso.segment', '.mp4': 'video/mp4', '.html': 'text/html', '.js': 'text/javascript' };
 export function serve(root, { port = 0, onRequest, routes = {} } = {}) {
-  const srv = http.createServer((req, res) => {
+  const srv = http.createServer(async (req, res) => {
     onRequest?.(req);
+    if (req.url.startsWith('/slow/')) { await new Promise((r) => setTimeout(r, 120)); req.url = req.url.replace('/slow/', '/hls_long/'); } // artificial latency
     const pn = new URL(req.url, 'http://x').pathname;
     if (routes[pn]) return routes[pn](req, res);
     // /protected/* only answers when the Referer comes from the same origin (hotlink protection)

@@ -1,6 +1,6 @@
 {
   "name": "streamgrab",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Cross-browser extension that detects HLS/DASH/blob-backed videos and downloads them as a single playable MP4 (audio + video), without having to play them.",
   "private": true,
   "type": "module",
@@ -11,8 +11,11 @@
     "test:e2e": "node tests/e2e/run.mjs",
     "lint:firefox": "web-ext lint --source-dir dist/firefox",
     "pack": "node scripts/build.mjs --zip",
-    "check": "npm run build && npm test && npm run lint:firefox && npm run test:e2e",
-    "fixtures:long": "bash tests/make-long-fixture.sh"
+    "check": "npm run build && npm test && npm run lint:firefox && npm run test:gallery && npm run test:ui && npm run test:e2e",
+    "fixtures:long": "bash tests/make-long-fixture.sh",
+    "screenshots": "SCREENSHOTS=1 node tests/e2e/ui-gallery.mjs && SCREENSHOTS=1 node tests/e2e/run.mjs",
+    "test:ui": "node tests/e2e/ui-tabs.mjs",
+    "test:gallery": "node tests/e2e/ui-gallery.mjs"
   },
   "license": "MIT",
   "dependencies": {
@@ -26,9 +29,21 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_USER/streamgrab.git"
+    "url": "git+https://github.com/D1se0/StreamGrab.git"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "keywords": [
+    "video-downloader",
+    "hls",
+    "dash",
+    "m3u8",
+    "mpd",
+    "blob",
+    "webextension",
+    "chrome-extension",
+    "firefox-addon",
+    "mp4"
+  ]
 }

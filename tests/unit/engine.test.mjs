@@ -38,6 +38,7 @@ test('analyze: HLS master lists qualities best first', async () => {
   const a = await analyzeManifest(`${S.base}/hls_ts/master.m3u8`);
   assert.equal(a.kind, 'hls'); assert.equal(a.options.length, 2);
   assert.equal(a.options[0].height, 360); assert.equal(a.options[1].height, 180);
+  assert.ok(Math.abs(a.duration - 12) < 0.5 && a.live === false, 'duration read from the best variant');
 });
 test('analyze: DASH', async () => {
   const a = await analyzeManifest(`${S.base}/dash/manifest.mpd`);
@@ -94,4 +95,36 @@ test('1-hour stream (108k video samples) – regression for "Maximum call stack 
   const x = await run(`${S.base}/hls_long/index.m3u8`);
   assert.equal(x.info.frames, 108000); assert.ok(Math.abs(x.info.duration - 3600) < 0.5);
   assert.equal(decodeErrors(x.file), '');
+});
+
+// ---- audio-only mode (M4A) ----
+async function runAudio(url) {
+  const r = await downloadStream(url, { mode: 'audio' });
+  const file = path.join(tmp, `${Math.random().toString(36).slice(2)}.m4a`);
+  fs.writeFileSync(file, Buffer.from(await r.blob.arrayBuffer()));
+  return { file, info: probe(file), r };
+}
+for (const [name, url] of [['HLS fMP4 (separate audio rendition – never fetches video)', 'hls_fmp4/master.m3u8'], ['DASH (never fetches video segments)', 'dash/manifest.mpd'], ['HLS MPEG-TS (audio extracted from muxed TS)', 'hls_ts/master.m3u8']]) {
+  test(`audio-only: ${name}`, async () => {
+    const x = await runAudio(`${S.base}/${url}`);
+    assert.equal(x.info.v, undefined, 'no video stream'); assert.equal(x.info.a.codec_name, 'aac');
+    assert.ok(Math.abs(x.info.duration - 12) < 0.3, `duration ${x.info.duration}`);
+    assert.equal(decodeErrors(x.file), '');
+    assert.equal(x.r.blob.type, 'audio/mp4');
+  });
+}
+test('audio-only skips video requests entirely (bandwidth saving)', async () => {
+  const hits = []; const s2 = await serve(root, { onRequest: (r) => hits.push(r.url) });
+  await downloadStream(`${s2.base}/dash/manifest.mpd`, { mode: 'audio' }); s2.close();
+  assert.ok(hits.some((u) => /chunk-1-/.test(u)) && !hits.some((u) => /chunk-0-/.test(u)), hits.filter((u) => /chunk|init/.test(u)).join(','));
+});
+
+// ---- file name templates ----
+import { formatName } from '../../src/core/naming.js';
+test('naming: default template, placeholders, cleanup, sanitising', () => {
+  assert.equal(formatName('{title} [{quality}]', { title: 'Aula: Hack4u', quality: '1080p' }, 'mp4'), 'Aula Hack4u [1080p].mp4');
+  assert.equal(formatName('{title} [{quality}]', { title: 'X', quality: '' }, 'mp4'), 'X.mp4', 'empty quality removes its brackets');
+  assert.equal(formatName('{site} - {title} ({quality}) {date}', { title: 'T', quality: '720p', site: 'a.com', dateObj: new Date(2026, 0, 5) }, 'm4a'), 'a.com - T (720p) 2026-01-05.m4a');
+  assert.equal(formatName('', { title: 'Z' }, 'mp4'), 'Z.mp4');
+  assert.ok(!/[\\/:*?"<>|]/.test(formatName('{title}', { title: 'a/b\\c:d*e?f"g<h>i|j' }, 'mp4')));
 });

@@ -7,3 +7,6 @@
 5. `npm run lint:firefox` must report 0 errors / 0 warnings.
 
 Rules: no feature without a test that decodes the produced MP4 with ffmpeg; never add DRM circumvention.
+
+6. `npm run fixtures:long` generates the 1-hour regression stream (CI does it too).
+7. `npm run screenshots` refreshes `docs/screenshots/` after UI changes.

@@ -1,0 +1,18 @@
+name: Bug report
+description: Something does not work
+labels: [bug]
+body:
+  - type: input
+    id: browser
+    attributes: { label: Browser + version, placeholder: "Chrome 150 / Firefox 141" }
+    validations: { required: true }
+  - type: input
+    id: site
+    attributes: { label: Site or stream type (HLS / DASH / blob), description: "Do NOT share private/paid content URLs. A public test stream is ideal." }
+  - type: textarea
+    id: what
+    attributes: { label: What happened? What did you expect?, description: "Include the exact error text shown in the popup." }
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes: { label: Service-worker console output, description: "chrome://extensions → StreamGrab → service worker → Console" , render: shell }

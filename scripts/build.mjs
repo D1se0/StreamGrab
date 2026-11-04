@@ -13,10 +13,11 @@ const common = {
   name: 'StreamGrab – HLS/DASH/Blob Video Downloader',
   short_name: 'StreamGrab',
   version: pkg.version,
+  homepage_url: 'https://github.com/YOUR_USER/streamgrab',
   description: 'Detects HLS, DASH and blob: videos on the page and downloads them as one playable MP4 (video + audio) – no need to play them.',
   icons: { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' },
   action: { default_popup: 'popup.html', default_title: 'StreamGrab', default_icon: { 16: 'icons/icon16.png', 32: 'icons/icon32.png' } },
-  permissions: ['webRequest', 'downloads', 'storage', 'tabs', 'declarativeNetRequest'],
+  permissions: ['webRequest', 'downloads', 'storage', 'tabs', 'notifications', 'declarativeNetRequest'],
   host_permissions: ['<all_urls>'],
   content_scripts: [
     { matches: ['<all_urls>'], js: ['inject-main.js'], run_at: 'document_start', all_frames: true, match_about_blank: true, world: 'MAIN' },
@@ -31,8 +32,7 @@ const targets = {
   },
   firefox: {
     manifest: {
-      // Firefox requires the explicit "downloads.open" permission; declaring it in Chrome MV3 (tested Chromium 143) makes the extension fail to load, so it stays Firefox-only
-      ...common, permissions: [...common.permissions, 'downloads.open'], background: { scripts: ['background.js'] },
+      ...common, background: { scripts: ['background.js'] },
       browser_specific_settings: { gecko: { id: 'streamgrab@users.noreply.github.com', strict_min_version: '140.0', data_collection_permissions: { required: ['none'] } }, gecko_android: { strict_min_version: '142.0' } },
     },
     entries: ['background', 'popup', 'content', 'inject-main'], define: { __FIREFOX__: 'true' }, extra: [],

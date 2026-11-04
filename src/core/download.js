@@ -81,11 +81,16 @@ async function downloadHls(url, optionId, o, progress) {
   const pl = parseHls(await fetchText(url, o), url);
   const sources = [];
   if (pl.type === 'master') {
-    const v = pl.variants[+optionId || 0];
+    const audioOnly = o.mode === 'audio';
+    // audio-only: use the cheapest variant (we only keep its audio) unless a dedicated audio rendition exists
+    const v = audioOnly ? pl.variants[pl.variants.length - 1] : pl.variants[+optionId || 0];
     if (!v) throw new Error('Quality not found');
     const audio = v.audioGroup ? (pl.audio.filter((a) => a.group === v.audioGroup).sort((a, b) => b.default - a.default)[0]) : null;
-    sources.push(await hlsMediaToSource(v.url, o, progress));
-    if (audio) sources.push(await hlsMediaToSource(audio.url, o, progress));
+    if (audioOnly && audio) sources.push(await hlsMediaToSource(audio.url, o, progress));
+    else {
+      sources.push(await hlsMediaToSource(v.url, o, progress));
+      if (audio) sources.push(await hlsMediaToSource(audio.url, o, progress));
+    }
   } else sources.push(await hlsMediaToSource(url, o, progress));
   return sources;
 }
@@ -110,6 +115,10 @@ async function downloadDash(url, optionId, o, progress) {
   const d = parseDash(await fetchText(url, o), url);
   if (d.encrypted) throw new Error('This stream is DRM-protected and cannot be downloaded');
   const list = d.video.length ? d.video : d.audio;
+  if (o.mode === 'audio') {
+    if (!d.audio.length) throw new Error('NO_AUDIO');
+    return [await repToSource(d.audio[0], o, progress)]; // never fetch the video segments
+  }
   const rep = list[+optionId || 0]; if (!rep) throw new Error('Quality not found');
   const sources = [await repToSource(rep, o, progress)];
   if (d.video.length && d.audio.length) sources.push(await repToSource(d.audio[0], o, progress));
@@ -120,13 +129,14 @@ async function downloadDash(url, optionId, o, progress) {
  * Main entry. opts: {fetch, signal, concurrency, onProgress}
  * returns {blob, duration, tracks}
  */
-export async function downloadStream(url, { optionId = '0', kind, maxBytes = 0, ...o } = {}) {
+export async function downloadStream(url, { optionId = '0', kind, maxBytes = 0, mode = 'both', ...o } = {}) {
+  o.mode = mode;
   const progress = new Progress(o.onProgress, maxBytes);
   const text = kind ? null : (await fetchText(url, o)).slice(0, 2000);
   const isHls = kind ? kind === 'hls' : text.includes('#EXTM3U');
   const sources = isHls ? await downloadHls(url, optionId, o, progress) : await downloadDash(url, optionId, o, progress);
   if (o.signal?.aborted) throw new AbortError();
   o.onProgress?.({ phase: 'mux', done: progress.done, total: progress.total, bytes: progress.bytes });
-  const out = await buildMp4(sources, { force64: o.force64 });
-  return { blob: new Blob(out.parts, { type: 'video/mp4' }), duration: out.duration, tracks: out.tracks, size: out.size };
+  const out = await buildMp4(sources, { force64: o.force64, only: o.mode === 'audio' ? 'soun' : '' });
+  return { blob: new Blob(out.parts, { type: mode === 'audio' ? 'audio/mp4' : 'video/mp4' }), duration: out.duration, tracks: out.tracks, size: out.size };
 }

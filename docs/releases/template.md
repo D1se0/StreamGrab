@@ -1,9 +1,3 @@
-# StreamGrab ${GITHUB_REF_NAME}
+# StreamGrab ${TAG}
 
-Extension build for this release. See `docs/releases/` in the repo for the full notes of this version.
-
-## 📦 Assets
-- `streamgrab-chrome-<version>.zip` — Chrome, Edge, Brave, Opera, Vivaldi
-- `streamgrab-firefox-<version>.zip` — Firefox 140+ (about:debugging → Load Temporary Add-on)
-
-Built and unit-tested by CI from the tagged source. **No DRM bypass — protected streams are flagged, never handled.**
+Release notes not written for ${TAG}. See [`CHANGELOG.md`](https://github.com/D1se0/StreamGrab/blob/main/CHANGELOG.md) for the details of this version.

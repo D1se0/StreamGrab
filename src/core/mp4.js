@@ -153,13 +153,14 @@ const rle = (arr) => { const out = []; for (const v of arr) { const l = out[out.
  * sources: [{init: Uint8Array, chunks: Uint8Array[]}]
  * chunks: Uint8Array | Blob. returns Promise<{parts: (Uint8Array|Blob)[], size, duration}>
  */
-export async function buildMp4(sources, { force64 = false } = {}) {
-  const all = []; const chunkStore = [];
+export async function buildMp4(sources, { force64 = false, only = '' } = {}) {
+  let all = []; const chunkStore = [];
   for (const src of sources) {
     const tracks = parseInit(src.init);
     for (const c of src.chunks) { const idx = chunkStore.push(c) - 1; await parseChunk(c, idx, tracks, src.absStart || 0); }
     for (const t of tracks.values()) if (t.samples.length) all.push(t);
   }
+  if (only) { all = all.filter((t) => t.handler === only); if (!all.length) throw new Error(only === 'soun' ? 'NO_AUDIO' : 'NO_VIDEO'); }
   if (!all.length) throw new Error('No media samples found');
   all.sort((a, b) => (a.handler === 'vide' ? 0 : 1) - (b.handler === 'vide' ? 0 : 1));
   const MT = 1000;

@@ -1,173 +1,191 @@
+import { makeT } from './i18n.js';
+import { formatName, DEFAULT_TEMPLATE } from './core/naming.js';
+
 const api = globalThis.browser ?? globalThis.chrome;
-const L = {
-  en: {
-    clear: 'Clear', auto: 'Auto-download best quality when detected', download: 'Download', cancel: 'Cancel', none: 'No videos detected on this page yet.\nPlay the video or reload the page (F5) – the extension can only see requests made while it is active.', blob: 'This page plays a blob: video. Reload the page so the extension can capture its stream manifest.', analyzing: 'Analysing…', running: 'Downloading', muxing: 'Building MP4…', saving: 'Saving…', done: 'Saved ✓ (check your downloads)', error: 'Error', cancelled: 'Cancelled', drm: 'DRM-protected (Widevine/FairPlay): cannot be downloaded.', webm: 'WebM/VP9 DASH is not supported yet.', empty: 'Empty or unsupported stream.', live: 'Live stream – downloading what is available now.', file: 'Direct file', limit: 'Max download size', nolimit: 'No limit', limitHit: 'Stopped: size limit reached. Raise or remove the limit in the footer and retry.',
-    videos: 'Videos', thisPage: 'Videos on this page', history: 'History', searchPh: 'Search title, site or file…', noHist: 'No downloads yet — everything you grab from any site will be saved here.', hClear: 'Clear all', sure: 'Sure?', hRedl: 'Download again', hOpen: 'Open video', hFolder: 'Show in downloads folder', hCopy: 'Copy stream URL', copyCard: 'Copy stream URL', copied: 'Copied', hDel: 'Remove from history', manifestGone: 'The source is no longer available; it could not be analysed again.', justNow: 'just now', minAgo: (n) => `${n} min ago`, hourAgo: (n) => `${n} h ago`, yesterday: 'yesterday', downloads: (n) => `${n} download${n === 1 ? '' : 's'}`,
-  },
-  es: {
-    clear: 'Limpiar', auto: 'Descargar automáticamente la mejor calidad al detectar', download: 'Descargar', cancel: 'Cancelar', none: 'Aún no se ha detectado ningún vídeo en esta página.\nReproduce el vídeo o recarga la página (F5): la extensión solo ve las peticiones mientras está activa.', blob: 'Esta página reproduce un vídeo blob:. Recarga la página para que la extensión capture el manifiesto del stream.', analyzing: 'Analizando…', running: 'Descargando', muxing: 'Generando MP4…', saving: 'Guardando…', done: 'Guardado ✓ (mira tus descargas)', error: 'Error', cancelled: 'Cancelado', drm: 'Protegido con DRM (Widevine/FairPlay): no se puede descargar.', webm: 'DASH WebM/VP9 aún no soportado.', empty: 'Stream vacío o no soportado.', live: 'Directo: se descarga lo disponible ahora mismo.', file: 'Archivo directo', limit: 'Tamaño máximo de descarga', nolimit: 'Sin límite', limitHit: 'Detenido: se alcanzó el límite de tamaño. Súbelo o quítalo en el pie del popup y reintenta.',
-    videos: 'Vídeos', thisPage: 'Vídeos en esta página', history: 'Historial', searchPh: 'Buscar por título, sitio o fichero…', noHist: 'Aún no hay descargas: todo lo que grabes de cualquier sitio aparecerá aquí.', hClear: 'Vaciar', sure: '¿Seguro?', hRedl: 'Volver a descargar', hOpen: 'Abrir el vídeo', hFolder: 'Mostrar en la carpeta de descargas', hCopy: 'Copiar URL del stream', copyCard: 'Copiar URL del stream', copied: 'Copiado', hDel: 'Quitar del historial', manifestGone: 'El origen ya no está disponible; no se pudo analizar de nuevo.', justNow: 'ahora mismo', minAgo: (n) => `hace ${n} min`, hourAgo: (n) => `hace ${n} h`, yesterday: 'ayer', downloads: (n) => n === 1 ? '1 descarga' : `${n} descargas`,
-  },
-};
-const t = (k) => (L[navigator.language?.startsWith('es') ? 'es' : 'en'][k]) ?? L.en[k] ?? k;
-document.querySelectorAll('[data-i18n]').forEach((e) => { e.textContent = t(e.dataset.i18n); });
-document.querySelectorAll('[data-i18n-ph]').forEach((e) => { e.placeholder = t(e.dataset.i18nPh); });
 const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const send = (m) => api.runtime.sendMessage(m);
-let tabId, lastSig = '', selected = {}, view = 'videos', hLastSig = '', hSearch = '';
-const fmtB = (b) => b >= 1073741824 ? `${(b / 1073741824).toFixed(2)} GB` : b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : `${b || 0} B`;
-function ago(ts) {
-  const m = Math.round((Date.now() - ts) / 60000);
-  if (m < 1) return t('justNow');
-  if (m < 60) return t('minAgo')(m);
-  if (m < 24 * 60) return t('hourAgo')(Math.round(m / 60));
-  return new Date(ts).toLocaleDateString(navigator.language, { day: 'numeric', month: 'short' });
-}
+const q = new URLSearchParams(location.search);
+
+// ---------- DOM + icon helpers (no innerHTML) ----------
+const ICONS = {
+  download: 'M12 3v12m0 0l-5-5m5 5l5-5M4 20h16', copy: 'M9 9h11v11H9zM5 15V5h10', term: 'M4 5h16v14H4zM8 10l3 2-3 2M13 14h3',
+  folder: 'M3 6h6l2 2h10v11H3z', link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13', check: 'M5 12l5 5 9-10', x: 'M6 6l12 12M18 6L6 18', play: 'M8 5l11 7-11 7z',
+  music: 'M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5',
+  film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4', clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',
+  cog: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM19 12l2-1-2-4-2 .5-1.5-1L15 4h-4l-.5 2.5-1.5 1L7 7l-2 4 2 1v2l-2 1 2 4 2-.5 1.5 1L11 20h4l.5-2.5 1.5-1 2 .5 2-4-2-1z',
+  alert: 'M12 4l9 16H3zM12 10v4M12 17v.5', ext: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6', retry: 'M4 4v6h6M20 20v-6h-6M5.5 15A8 8 0 0 0 20 12M18.5 9A8 8 0 0 0 4 12',
+  sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+  moon: 'M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10z', monitor: 'M3 5h18v11H3zM8 20h8M12 16v4', bell: 'M6 9a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 21h4',
+  tag: 'M3 12V3h9l9 9-9 9zM8 8h.01', globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18', bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',
+  layers: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5', hdd: 'M3 14h18v6H3zM3 14l3-9h12l3 9M7 17h.01', shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
+  list: 'M4 6h16M4 12h16M4 18h10', save: 'M5 4h12l3 3v13H5zM8 4v5h8V4M8 20v-6h8v6',
+};
+const icon = (name) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'i'); s.setAttribute('aria-hidden', 'true'); const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', ICONS[name]); s.append(p); return s; };
 const h = (tag, props = {}, ...kids) => {
   const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) { if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (v === true) e.setAttribute(k, ''); else if (v !== false && v != null) e.setAttribute(k, v); else if (v === false) e[k === 'hidden' ? 'hidden' : k] = v; }
+  for (const [k, v] of Object.entries(props)) { if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (v === true) e.setAttribute(k, ''); else if (v !== false && v != null) e.setAttribute(k, v); }
   for (const c of kids.flat()) if (c != null && c !== false) e.append(c);
   return e;
 };
-const SVB = 'http://www.w3.org/2000/svg';
-const svg = (d) => { const s = document.createElementNS(SVB, 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '2'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round'); for (const p of [].concat(d)) { const el = document.createElementNS(SVB, 'path'); el.setAttribute('d', p); s.append(el); } return s; };
-const IC = {
-  redl: ['M21 12a9 9 0 1 1-2.6-6.4', 'M21 3v5h-5'],
-  open: ['M6 4l14 8-14 8z'],
-  folder: ['M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z'],
-  copy: ['M9 9h11a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z', 'M15 5V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h1'],
-  trash: ['M3 6h18', 'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6', 'M10 11v6', 'M14 11v6'],
-  check: ['M20 6L9 17l-5-5'],
-};
-async function copyText(txt) {
-  try { await navigator.clipboard.writeText(txt); return true; } catch {
-    const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.append(ta); ta.select();
-    let ok = false; try { ok = document.execCommand('copy'); } catch { /* ignore */ } ta.remove(); return ok;
-  }
-}
-const copyBtn = (url, tip) => h('button', { class: 'icob', type: 'button', title: tip, 'aria-label': tip, onclick: async (e) => { const ok = await copyText(url); if (!ok) return; e.currentTarget.classList.add('ok'); e.currentTarget.replaceChildren(svg(IC.check)); setTimeout(() => { e.currentTarget.classList.remove('ok'); e.currentTarget.replaceChildren(svg(IC.copy)); }, 1200); } }, svg(IC.copy));
-let tick = () => {};
+const btn = (cls, ic, label, onclick, title) => h('button', { class: cls, onclick, title: title || label || '', 'aria-label': title || label || ic }, ic ? icon(ic) : null, label || null);
+const seg = (opts, value, onchange) => h('div', { class: 'seg', role: 'group' }, opts.map(([v, label, ic]) => h('button', { class: String(value) === String(v) ? 'on' : '', 'aria-pressed': String(value) === String(v), onclick: () => onchange(v) }, ic ? icon(ic) : null, label)));
+const selectBox = (opts, value, onchange, extra = {}) => h('div', { class: 'select' }, h('select', { ...extra, onchange: (e) => onchange(e.target.value) }, opts.map(([v, l]) => h('option', { value: v, selected: String(value) === String(v) }, l))));
 
-// ================= videos view =================
-async function refresh() {
-  const st = await send({ type: 'getState', tabId });
-  if (!st) return;
-  $('#auto').checked = !!st.settings.auto;
-  if (document.activeElement !== $('#maxGB')) $('#maxGB').value = String(st.settings.maxGB || 0);
-  const sig = JSON.stringify(st.items.map((i) => [i.id, i.state, i.problem, i.options.length, i.job?.status, i.job?.id]));
-  if (sig !== lastSig) { lastSig = sig; render(st); }
-  for (const i of st.items) updateProgress(i);
+// ---------- state ----------
+let t = makeT('auto'), cfg = {}, tabId, tab = q.get('view') || 'detected', lastSig = '', thumb = '', histFilter = '';
+const selected = {}, modes = {}, counts = { d: 0, h: 0 }, seenCards = new Set(); // seenCards: only brand-new cards animate in (re-renders must not flicker)
+let activeJobs = 0;
+
+const fmtBytes = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(2)} GB` : b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+const fmtDur = (s) => { s = Math.round(s); const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60; return hh ? `${hh}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${mm}:${String(ss).padStart(2, '0')}`; };
+const dayLabel = (ts) => { const d = new Date(ts), n = new Date(); const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); const diff = Math.round((day(n) - day(d)) / 864e5); return diff === 0 ? t('today') : diff === 1 ? t('yesterday') : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); };
+const fill = (s, v) => s.replace(/\{(\w+)\}/g, (_m, k) => v[k]);
+let toastTimer;
+const toast = (msg) => { const el = $('#toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 1400); };
+const copy = async (text) => { try { await navigator.clipboard.writeText(text); } catch { const ta = h('textarea'); ta.value = text; document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove(); } toast(`${t('copied')}`); };
+const ffmpegCmd = (i) => `ffmpeg ${i.pageUrl ? `-referer "${i.pageUrl}" ` : ''}-i "${i.url}" -c copy "video.mp4"`;
+const BUSY = ['queued', 'running', 'muxing', 'saving'];
+const errText = (e) => (String(e).startsWith('SIZE_LIMIT') ? t('limitHit') : `${t('error')}: ${e}`);
+
+function applyTheme() { document.documentElement.dataset.theme = cfg.theme && cfg.theme !== 'auto' ? cfg.theme : ''; }
+function drawChrome() {
+  const act = $('#active'); act.hidden = !activeJobs; act.textContent = activeJobs ? String(activeJobs) : ''; act.title = t('activeDl');
+  $('#tabs').replaceChildren(...[['detected', 'film', 'tabDetected'], ['history', 'clock', 'tabHistory'], ['settings', 'cog', 'tabSettings']].map(([id, ic, k]) =>
+    h('button', { class: `tab${tab === id ? ' on' : ''}`, role: 'tab', 'aria-selected': tab === id, 'data-tab': id, onclick: () => { tab = id; show(); } }, icon(ic), t(k), id === 'detected' && counts.d ? h('span', { class: 'n' }, counts.d) : id === 'history' && counts.h ? h('span', { class: 'n' }, counts.h) : null)));
 }
-const host = (u) => { try { return new URL(u).host; } catch { return u; } };
-function render(st) {
-  const list = $('#list'); list.replaceChildren();
-  $('#empty').hidden = st.items.length > 0; $('#emptyMsg').textContent = st.blob ? t('blob') : t('none');
-  $('#emptyMsg').style.whiteSpace = 'pre-line';
-  for (const i of st.items) {
-    const u = new URL(i.url);
-    const kind = { hls: 'HLS', dash: 'DASH' }[i.kind] || (/\.(w{2,4})(?:$|\?)/.exec(u.pathname)?.[1] || 'FILE').toUpperCase();
-    const dur = i.duration ? ` · ${Math.floor(i.duration / 60)}:${String(Math.round(i.duration % 60)).padStart(2, '0')}` : '';
-    const size = i.size ? ` · ${(i.size / 1048576).toFixed(1)} MB` : '';
-    const busy = i.job && ['running', 'muxing', 'saving'].includes(i.job.status);
-    let sel = null;
-    if (i.options.length > 1) sel = h('select', { 'data-opt': true, onchange: (e) => { selected[i.id] = e.target.value; } }, i.options.map((o) => h('option', { value: o.id, selected: selected[i.id] === o.id }, o.label)));
-    const info = !sel && i.options.length === 1 && i.options[0].label !== 'Default' ? h('span', { class: 'sub' }, i.options[0].label) : null;
-    const dl = h('button', { class: 'primary', disabled: !!(i.problem || busy), onclick: () => { send({ type: 'download', tabId, itemId: i.id, optionId: sel?.value ?? '0' }).then(refresh); } }, t('download'));
-    list.append(h('div', { class: 'card', 'data-id': i.id },
-      h('div', { class: 'top' }, h('span', { class: 'badge' }, kind), h('div', { class: 'title', title: i.title }, i.title || u.hostname)),
-      h('div', { class: 'sub', title: i.url }, u.host + u.pathname + dur + size),
-      i.problem ? h('div', { class: 'msg err' }, t(i.problem)) : i.live ? h('div', { class: 'msg' }, t('live')) : null,
-      h('div', { class: 'row' }, i.state === 'analyzing' ? h('span', { class: 'sub' }, t('analyzing')) : [sel, info, dl, busy ? h('button', { onclick: () => send({ type: 'cancel', jobId: i.job.id }) }, t('cancel')) : null, copyBtn(i.url, t('copyCard'))]),
-      h('div', { class: 'bar', hidden: !i.job }, h('i')), h('div', { class: 'msg', 'data-status': true })));
+function show() { for (const id of ['detected', 'history', 'settings']) $(`#tab-${id}`).hidden = id !== tab; drawChrome(); lastSig = ''; if (tab === 'history') renderHistory(); else if (tab === 'settings') renderSettings(); else refresh(); }
+
+// ---------- DETECTED ----------
+async function refresh() {
+  const st = await send({ type: 'getState', tabId }); if (!st) return;
+  cfg = st.settings; counts.d = st.items.filter((i) => !i.problem).length; counts.h = st.historyCount; activeJobs = st.activeJobs || 0;
+  const sig = JSON.stringify([tab, cfg.lang, st.items.map((i) => [i.id, i.state, i.problem, i.options.length, i.job?.status, i.job?.id]), st.blob, activeJobs]);
+  if (sig !== lastSig) { lastSig = sig; t = makeT(cfg.lang); applyTheme(); drawChrome(); if (tab === 'detected') renderDetected(st); }
+  if (tab === 'detected') for (const i of st.items) updateProgress(i);
+}
+function renderDetected(st) {
+  const ready = st.items.filter((i) => i.state === 'ready' && !i.problem && !i.live && !(i.job && [...BUSY, 'done'].includes(i.job.status)));
+  const n = st.items.length;
+  $('#dToolbar').replaceChildren(...(n ? [h('span', { class: 'cnt' }, n === 1 ? t('nVideos1') : fill(t('nVideosN'), { n })), h('div', { class: 'row' },
+    ready.length > 1 ? btn('primary sm', 'download', `${t('downloadAll')} (${ready.length})`, () => send({ type: 'downloadAll', tabId, thumb }).then(refresh)) : null,
+    btn('ghost sm', 'trash', t('clear'), async () => { await send({ type: 'clear', tabId }); lastSig = ''; refresh(); }))] : []));
+  $('#empty').hidden = n > 0;
+  if (!n) $('#empty').replaceChildren(h('div', { class: 'art' }, icon('download')), h('b', {}, t('stepsTitle')), st.blob ? h('div', { class: 'box warn', style: 'margin-top:8px;text-align:left' }, icon('alert'), h('span', {}, t('blob'))) : null,
+    h('ol', { class: 'steps' }, [1, 2, 3].map((k) => h('li', {}, h('span', { class: 'num' }, k), h('span', {}, t(`step${k}`))))));
+  $('#list').replaceChildren(...st.items.map(card));
+}
+function card(i) {
+  const u = new URL(i.url), job = i.job, busy = job && BUSY.includes(job.status);
+  const mode = modes[i.id] || 'both';
+  const opt = i.options.find((o) => o.id === (selected[i.id] ?? '0')) || i.options[0];
+  const est = i.kind === 'file' ? i.size : opt?.bandwidth && i.duration ? (opt.bandwidth * i.duration) / 8 : 0;
+  const kind = { hls: 'HLS', dash: 'DASH' }[i.kind] || (/\.(\w{2,4})(?:$|\?)/.exec(u.pathname)?.[1] || 'FILE').toUpperCase();
+  const sel = i.options.length > 1 && mode === 'both' ? selectBox(i.options.map((o, k) => [o.id, k === 0 ? `★ ${o.label}` : o.label]), selected[i.id] ?? '0', (v) => { selected[i.id] = v; lastSig = ''; refresh(); }, { 'data-opt': true, 'aria-label': 'Quality' }) : null;
+  const go = () => send({ type: 'download', tabId, itemId: i.id, optionId: sel?.querySelector('select').value ?? selected[i.id] ?? '0', mode, thumb }).then(refresh);
+  const parts = [];
+  parts.push(h('div', { class: 'top' },
+    h('div', { class: 'thumb' }, icon('play'), thumb ? h('img', { src: thumb, alt: '', onerror: (e) => e.target.remove() }) : null, h('span', { class: 'tk' }, kind), i.duration ? h('span', { class: 'td' }, fmtDur(i.duration)) : null),
+    h('div', { class: 'info' }, h('div', { class: 'title', title: i.title }, i.title || u.hostname), h('div', { class: 'sub', title: i.url }, `${u.host}${u.pathname}`),
+      h('div', { class: 'chips' }, opt?.height ? h('span', { class: 'chip g' }, `${opt.height}p`) : null, est && mode === 'both' ? h('span', { class: 'chip' }, `~${fmtBytes(est)}`) : null, i.live ? h('span', { class: 'chip w' }, 'LIVE') : null)),
+    h('div', { class: 'acts' }, btn('ic', 'link', '', () => copy(i.url), t('copyUrl')), btn('ic', 'term', '', () => copy(ffmpegCmd(i)), t('copyFfmpeg')))));
+  if (i.problem) parts.push(h('div', { class: 'box err' }, icon('alert'), h('span', {}, t(i.problem))));
+  else if (i.state === 'analyzing') parts.push(h('div', { class: 'skel' }, h('i', { style: 'width:70%' }), h('i', { style: 'width:45%' })));
+  else if (busy) parts.push(h('div', { class: 'prog' },
+    h('div', { class: 'prow' }, h('span', { class: 'pst', 'data-pst': true }), h('span', { class: 'ppct', 'data-pct': true }), btn('ic', 'x', '', () => send({ type: 'cancel', jobId: job.id }), t('cancel'))),
+    h('div', { class: 'bar', 'data-bar': true }, h('i')), h('div', { class: 'pmeta', 'data-status': true })));
+  else {
+    if (i.live) parts.push(h('div', { class: 'box warn' }, icon('alert'), h('span', {}, t('live'))));
+    if (job?.status === 'done') parts.push(h('div', { class: 'box ok' }, icon('check'), h('span', {}, `${t('saved')}${job.size ? ` · ${fmtBytes(job.size)}` : ''}`), job.downloadId != null ? btn('sm', 'folder', t('show'), () => send({ type: 'historyShow', downloadId: job.downloadId })) : null));
+    if (job?.status === 'error') parts.push(h('div', { class: 'box err', 'data-status': true }, icon('alert'), h('span', { title: job.error }, errText(job.error)), btn('sm', 'retry', t('retry'), go)));
+    if (job?.status === 'cancelled') parts.push(h('div', { class: 'box info' }, icon('x'), h('span', {}, t('cancelled'))));
+    const segEl = i.kind !== 'file' && i.options.length ? seg([['both', t('video')], ['audio', t('audio')]], mode, (m) => { modes[i.id] = m; lastSig = ''; refresh(); }) : null;
+    if (segEl || sel) parts.push(h('div', { class: 'controls' }, segEl, sel));
+    parts.push(btn('primary dl', 'download', job?.status === 'done' ? t('again') : t('download'), go));
   }
+  const isNew = !seenCards.has(i.id); seenCards.add(i.id);
+  return h('div', { class: `card${isNew ? ' enter' : ''}`, 'data-id': i.id }, ...parts);
 }
 function updateProgress(i) {
-  const card = document.querySelector(`.card[data-id="${i.id}"]`); const j = i.job; if (!card || !j) return;
-  card.querySelector('.bar > i').style.width = `${j.pct}%`;
-  const s = card.querySelector('[data-status]');
-  const mb = j.bytes ? ` · ${(j.bytes / 1048576).toFixed(1)} MB` : '';
-  s.className = `msg ${j.status === 'error' ? 'err' : j.status === 'done' ? 'ok' : ''}`;
-  s.textContent = j.status === 'error' ? (j.error.startsWith('SIZE_LIMIT') ? t('limitHit') : `${t('error')}: ${j.error}`) : j.status === 'running' ? `${t('running')} ${j.pct}%${mb}` : t(j.status) || j.status;
+  const el = document.querySelector(`.card[data-id="${i.id}"]`), j = i.job; if (!el || !j || !el.querySelector('[data-bar]')) return;
+  const bar = el.querySelector('[data-bar]'); bar.className = `bar${j.status === 'queued' ? ' q' : ''}${j.status === 'muxing' || j.status === 'saving' ? ' m' : ''}`;
+  bar.firstChild.style.width = `${j.pct}%`;
+  el.querySelector('[data-pst]').textContent = t(j.status);
+  el.querySelector('[data-pct]').textContent = j.status === 'queued' ? '' : `${j.pct}%`;
+  el.querySelector('[data-status]').textContent = j.status === 'running' ? [fmtBytes(j.bytes || 0), j.speed ? `${fmtBytes(j.speed)}/s` : '', j.eta != null ? `${t('eta')} ${fmtDur(j.eta)}` : ''].filter(Boolean).join(' · ') : '';
 }
-$('#clear').addEventListener('click', async () => { await send({ type: 'clear', tabId }); lastSig = ''; refresh(); });
-$('#maxGB').addEventListener('change', (e) => send({ type: 'setSettings', settings: { maxGB: +e.target.value } }));
-$('#auto').addEventListener('change', (e) => send({ type: 'setSettings', settings: { auto: e.target.checked } }));
 
-// ================= history view =================
-function setView(v) {
-  view = v; document.body.dataset.view = v;
-  $('#tabVids').classList.toggle('active', v === 'videos'); $('#tabHist').classList.toggle('active', v === 'history');
-  $('#viewVids').hidden = v !== 'videos'; $('#viewHist').hidden = v !== 'history';
-  $('#footVids').hidden = v !== 'videos'; $('#footHist').hidden = v !== 'history';
-  lastSig = ''; hLastSig = ''; tick();
-}
-$('#tabVids').addEventListener('click', () => setView('videos'));
-$('#tabHist').addEventListener('click', () => setView('history'));
-$('#hsearch').addEventListener('input', (e) => { hSearch = e.target.value.trim().toLowerCase(); hLastSig = ''; refresh(); });
-// clear-all is armed by the first click and confirmed by a second click (no blocking dialogs)
-let armed = 0;
-$('#hclear').addEventListener('click', async (e) => {
-  if (!armed) { armed = Date.now(); e.currentTarget.textContent = t('sure'); e.currentTarget.classList.add('armed'); setTimeout(resetArm, 3500); return; }
-  resetArm(); await send({ type: 'histClear' }); hLastSig = ''; tick();
-});
-function resetArm() { armed = 0; const b = $('#hclear'); b.textContent = t('hClear'); b.classList.remove('armed'); }
-
-async function refreshHist() {
-  const st = await send({ type: 'getHistory' });
-  if (!st) return;
-  $('#hcount').hidden = !st.items.length; $('#hcount').textContent = st.stats.count;
-  $('#hstats').textContent = st.items.length ? `${t('downloads')(st.stats.count)} · ${fmtB(st.stats.bytes)}` : '';
-  const q = hSearch.toLowerCase();
-  const shown = q ? st.items.filter((e) => `${e.title} ${e.filename} ${host(e.srcUrl || '')}`.toLowerCase().includes(q)) : st.items;
-  const jobBy = {}; for (const j of st.jobs) jobBy[j.histId] = j;
-  const sig = JSON.stringify([shown.map((e) => e.id), shown.map((e) => !!jobBy[e.id] && ['running', 'muxing', 'saving'].includes(jobBy[e.id].status)), hSearch]);
-  if (sig !== hLastSig) { hLastSig = sig; renderHist(shown, jobBy); }
-  for (const j of st.jobs) updateHistProgress(j);
-}
-tick = () => (view === 'videos' ? refresh() : refreshHist());
-function renderHist(shown, jobBy) {
-  const list = $('#hlist'); list.replaceChildren();
-  $('#hempty').hidden = shown.length > 0 || !!hSearch; $('#hsearch').hidden = false;
-  for (const e of shown) {
-    const j = jobBy[e.id];
-    const busy = j && ['running', 'muxing', 'saving'].includes(j.status);
-    const badge = { hls: 'HLS', dash: 'DASH' }[e.kind] || 'FILE';
-    const optSel = (e.options || []).length > 1
-      ? h('select', { class: 'opts', 'data-hopt': true, title: t('download') }, (e.options || []).map((o) => h('option', { value: o.id, selected: o.id === String(e.optionId) }, o.label)))
-      : null;
-    const icoBtn = (ic, tip, fn, disabled) => h('button', { class: 'icob', type: 'button', title: tip, 'aria-label': tip, disabled: !!disabled, onclick: fn }, svg(IC[ic]));
-    const src = e.srcUrl || ''; const pg = e.pageUrl || src;
-    const meta = [e.quality, fmtB(e.size || 0), ago(e.fin)].filter(Boolean).join(' · ');
-    list.append(h('div', { class: 'card', 'data-hist': e.id },
-      h('div', { class: 'top' },
-        h('span', { class: `badge${badge === 'FILE' ? ' dim' : ''}` }, badge),
-        h('div', { class: 'title', title: e.filename }, e.filename),
-        h('span', { class: 'q' }, 'MP4')),
-      h('div', { class: 'histrow' }, h('div', { class: 'sub', title: `${pg}\n${src}` }, `${host(pg === src ? src : pg)} · ${meta}`)),
-      h('div', { class: 'row' },
-        busy ? h('span', { class: 'sub' }, t(j.status === 'muxing' ? 'muxing' : j.status === 'saving' ? 'saving' : 'running'))
-          : [optSel, h('button', { class: 'primary', onclick: () => send({ type: 'histDownload', histId: e.id, optionId: optSel?.value || e.optionId || '0' }).then(refreshHist) }, t('download'))],
-        h('div', { class: 'hacts' },
-          e.dlId ? icoBtn('open', t('hOpen'), () => send({ type: 'openFile', dlId: e.dlId })) : null,
-          e.dlId ? icoBtn('folder', t('hFolder'), () => send({ type: 'showFile', dlId: e.dlId })) : null,
-          src ? copyBtn(src, t('hCopy')) : null,
-          icoBtn('trash', t('hDel'), async () => { await send({ type: 'histRemove', histId: e.id }); hLastSig = ''; tick(); }))),
-      h('div', { class: 'bar', hidden: !busy }, h('i')), busy ? h('div', { class: 'msg', 'data-hjob': e.id }) : null));
+// ---------- HISTORY ----------
+async function renderHistory() {
+  const box = $('#searchBox');
+  if (!box.firstChild) box.replaceChildren(icon('search'), h('input', { type: 'search', 'aria-label': t('histSearch'), placeholder: t('histSearch'), oninput: (e) => { histFilter = e.target.value.toLowerCase(); renderHistory(); } }));
+  box.querySelector('input').placeholder = t('histSearch');
+  const { history } = await send({ type: 'getHistory' });
+  counts.h = history.length; drawChrome();
+  const list = history.filter((x) => !histFilter || `${x.title} ${x.site} ${x.quality} ${x.filename}`.toLowerCase().includes(histFilter));
+  $('#hEmpty').hidden = list.length > 0;
+  if (!list.length) $('#hEmpty').replaceChildren(h('div', { class: 'art' }, icon('clock')), h('b', {}, t('histEmpty')));
+  const totalSize = history.filter((x) => x.status === 'done').reduce((a, x) => a + (x.size || 0), 0);
+  $('#hSummary').replaceChildren(...(history.length ? [fill(t('histSummary'), { n: history.length, size: fmtBytes(totalSize || 0) })] : []));
+  const out = []; let last = '';
+  for (const x of list) {
+    const d = dayLabel(x.date); if (d !== last) { out.push(h('div', { class: 'day' }, d)); last = d; }
+    const gone = x.status === 'done' && x.exists === false, err = x.status === 'error';
+    out.push(h('div', { class: `h${gone ? ' gone' : ''}`, title: gone ? t('fileGone') : x.title },
+      h('div', { class: `tile${err ? ' error' : x.mode === 'audio' ? ' audio' : ''}` }, icon(x.mode === 'audio' ? 'music' : 'film'), x.thumb && !err && x.mode !== 'audio' ? h('img', { src: x.thumb, alt: '', onerror: (e) => e.target.remove() }) : null, h('span', { class: `bdg${err ? ' error' : ''}` }, icon(err ? 'x' : 'check'))),
+      h('div', { class: 'info' }, h('div', { class: 'title' }, x.filename || x.title),
+        h('div', { class: 'sub' }, ...[x.site, x.quality, x.size ? fmtBytes(x.size) : '', x.duration ? fmtDur(x.duration) : ''].filter(Boolean).map((v) => h('span', {}, v))),
+        err ? h('div', { class: 'errtxt' }, errText(x.error)) : null),
+      h('div', { class: 'when' }, new Date(x.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+      h('div', { class: 'hacts' },
+        x.status === 'done' && !gone && x.downloadId != null ? btn('ic', 'folder', '', () => send({ type: 'historyShow', downloadId: x.downloadId }), t('openFolder')) : null,
+        x.pageUrl ? btn('ic', 'ext', '', () => send({ type: 'openUrl', url: x.pageUrl }), t('openPage')) : null,
+        btn('ic', 'link', '', () => copy(x.url), t('copyUrl')),
+        btn('ic danger', 'trash', '', async () => { await send({ type: 'historyDelete', id: x.id }); renderHistory(); }, t('remove')))));
   }
-}
-function updateHistProgress(j) {
-  const el = document.querySelector(`[data-hjob="${j.histId}"]`); if (!el) return;
-  const card = el.closest('.card');
-  card.querySelectorAll('.bar > i').forEach((b) => { b.style.width = `${j.pct}%`; });
-  const mb = j.bytes ? ` · ${(j.bytes / 1048576).toFixed(1)} MB` : '';
-  const busy = ['running', 'muxing', 'saving'].includes(j.status);
-  if (!busy) { el.remove(); hLastSig = ''; refreshHist(); return; }
-  el.className = `msg${j.status === 'error' ? ' err' : ''}`;
-  el.textContent = j.status === 'error' ? (String(j.error).startsWith('SIZE_LIMIT') ? t('limitHit') : `${t('error')}: ${j.error}`) : `${t(j.status) || j.status} ${j.pct}%${mb}`;
+  $('#hlist').replaceChildren(...out);
+  $('#hFooter').replaceChildren(...(history.length ? [btn('sm', 'save', t('histExport'), () => { const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' })), download: 'streamgrab-history.json' }); a.click(); }), btn('sm danger', 'trash', t('histClear'), async () => { if (confirm(t('histClearConfirm'))) { await send({ type: 'historyClear' }); renderHistory(); } })] : []));
 }
 
+// ---------- SETTINGS ----------
+async function setCfg(patch) { cfg = await send({ type: 'setSettings', settings: patch }); t = makeT(cfg.lang); applyTheme(); drawChrome(); }
+function renderSettings() {
+  const toggle = (key) => h('label', { class: 'sw' }, h('input', { type: 'checkbox', checked: !!cfg[key], 'aria-label': key, onchange: (e) => setCfg({ [key]: e.target.checked }) }), h('i'));
+  const row = (ic, title, desc, ctl) => h('div', { class: 's' }, h('div', { class: 'lead' }, icon(ic)), h('div', { class: 'l' }, h('b', {}, title), desc ? h('span', {}, desc) : null), ctl);
+  const rerender = async (patch) => { await setCfg(patch); renderSettings(); };
+  const preview = h('div', { class: 'prev' });
+  const upd = (v) => { preview.replaceChildren(`${t('preview')}: `, h('code', {}, formatName(v || DEFAULT_TEMPLATE, { title: 'My video', quality: '1080p', site: 'example.com' }, 'mp4'))); };
+  upd(cfg.template);
+  const input = h('input', { type: 'text', value: cfg.template || DEFAULT_TEMPLATE, 'aria-label': t('sTemplate'), oninput: (e) => upd(e.target.value), onchange: (e) => setCfg({ template: e.target.value }) });
+  const chips = h('div', { class: 'tpl' }, ['{title}', '{quality}', '{site}', '{date}', '{time}'].map((p) => h('button', { title: t('insert'), onclick: () => { input.value += p; upd(input.value); setCfg({ template: input.value }); } }, p)));
+  const manifest = api.runtime.getManifest();
+  const repo = manifest.homepage_url && !manifest.homepage_url.includes('YOUR_USER') ? manifest.homepage_url : '';
+  $('#tab-settings').replaceChildren(
+    h('div', { class: 'group' }, t('secDownloads')),
+    h('div', { class: 'set' },
+      row('bolt', t('sAuto'), t('sAutoD'), toggle('auto')),
+      row('layers', t('sParallel'), t('sParallelD'), seg([1, 2, 3, 4].map((n) => [n, String(n)]), cfg.maxParallel, (v) => rerender({ maxParallel: +v }))),
+      row('list', t('sSegments'), t('sSegmentsD'), selectBox([2, 4, 6, 8, 12, 16].map((n) => [n, n]), cfg.concurrency, (v) => setCfg({ concurrency: +v }))),
+      row('hdd', t('sLimit'), '', selectBox([[0, t('noLimit')], [1, '1 GB'], [2, '2 GB'], [4, '4 GB'], [8, '8 GB'], [16, '16 GB'], [32, '32 GB']], cfg.maxGB, (v) => setCfg({ maxGB: +v })))),
+    h('div', { class: 'group' }, t('secFiles')),
+    h('div', { class: 'set' },
+      row('folder', t('sAsk'), '', toggle('saveAs')), row('bell', t('sNotify'), t('sNotifyD'), toggle('notify')), row('clock', t('sHistory'), '', toggle('history')),
+      h('div', { class: 's col' }, h('div', { class: 'lead' }, icon('tag')), h('div', { class: 'l' }, h('b', {}, t('sTemplate')), h('span', {}, t('sTemplateD'))), h('div', { class: 'full' }, input, chips, preview))),
+    h('div', { class: 'group' }, t('secLook')),
+    h('div', { class: 'set' },
+      row('sun', t('sTheme'), '', seg([['auto', t('themeAuto'), 'monitor'], ['light', t('themeLight'), 'sun'], ['dark', t('themeDark'), 'moon']], cfg.theme || 'auto', (v) => rerender({ theme: v }))),
+      row('globe', t('sLang'), '', seg([['auto', t('langAuto')], ['es', 'ES'], ['en', 'EN']], cfg.lang || 'auto', (v) => rerender({ lang: v })))),
+    h('div', { class: 'about' }, h('img', { src: 'icons/icon48.png', alt: '' }), h('div', { class: 'l' }, h('b', {}, `StreamGrab v${manifest.version}`), h('span', {}, t('about'))), repo ? btn('sm', 'ext', t('github'), () => send({ type: 'openUrl', url: repo })) : null));
+}
+
+// ---------- boot ----------
+async function pageInfo() { try { const r = await api.tabs.sendMessage(tabId, { type: 'pageInfo' }, { frameId: 0 }); thumb = r?.thumb || ''; } catch { thumb = ''; } }
 (async () => {
-  const [tab] = await api.tabs.query({ active: true, currentWindow: true });
-  tabId = +(new URLSearchParams(location.search).get('tab')) || tab?.id; setView('videos'); setInterval(() => tick(), 600);
+  const [active] = await api.tabs.query({ active: true, currentWindow: true });
+  tabId = +q.get('tab') || active?.id;
+  let tabInfo = active; if (q.get('tab')) { try { tabInfo = await api.tabs.get(tabId); } catch { /* ignore */ } }
+  try { const u = new URL(tabInfo.url); $('#site').replaceChildren(...(tabInfo.favIconUrl ? [h('img', { src: tabInfo.favIconUrl, alt: '', onerror: (e) => e.target.remove() })] : []), h('span', {}, u.hostname)); } catch { $('#site').hidden = true; }
+  const st = await send({ type: 'getState', tabId }); cfg = st.settings; t = makeT(cfg.lang); applyTheme();
+  await pageInfo(); show();
+  setInterval(() => { if (tab === 'detected') refresh(); }, 600);
 })();

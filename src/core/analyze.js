@@ -12,7 +12,16 @@ export async function analyzeManifest(url, opts = {}) {
   if (head.includes('#EXTM3U')) {
     const pl = parseHls(text, url);
     if (pl.type === 'master') {
-      return { kind: 'hls', url, isMaster: true, options: pl.variants.map((v, i) => ({ id: String(i), width: v.width, height: v.height, bandwidth: v.bandwidth, codecs: v.codecs, frameRate: v.frameRate, label: optionLabel(v), url: v.url })), childUrls: pl.variants.map((v) => v.url).concat(pl.audio.map((a) => a.url)), problem: pl.variants.length ? null : 'empty' };
+      let duration, live, problem = pl.variants.length ? null : 'empty';
+      try { // peek at the best variant: gives duration (size estimate), live flag, and detects DRM before downloading
+        const first = parseHls(await fetchText(pl.variants[0].url, opts), pl.variants[0].url);
+        if (first.type === 'media') {
+          duration = first.duration; live = !first.endlist;
+          const k = first.segments.find((x) => x.key)?.key;
+          if (k && (k.method !== 'AES-128' || k.format !== 'identity')) problem = 'drm';
+        }
+      } catch { /* variant unreachable: still list qualities */ }
+      return { kind: 'hls', url, isMaster: true, duration, live, options: pl.variants.map((v, i) => ({ id: String(i), width: v.width, height: v.height, bandwidth: v.bandwidth, codecs: v.codecs, frameRate: v.frameRate, label: optionLabel(v), url: v.url })), childUrls: pl.variants.map((v) => v.url).concat(pl.audio.map((a) => a.url)), problem };
     }
     const enc = pl.segments.find((s) => s.key)?.key;
     let problem = null;

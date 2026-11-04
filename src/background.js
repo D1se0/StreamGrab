@@ -1,30 +1,21 @@
-// StreamGrab background: detects media requests, analyses manifests, runs downloads, keeps a download history.
+// StreamGrab background: detects media requests, analyses manifests, runs downloads.
 import { analyzeManifest } from './core/analyze.js';
-import { sanitizeFilename } from './core/util.js';
+import { formatName, DEFAULT_TEMPLATE } from './core/naming.js';
+import { makeT } from './i18n.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
 /* global __FIREFOX__ */
 
-let S = { media: {}, jobs: {}, seq: 0, dl: {} };
-const settings = { auto: false, concurrency: 6, saveAs: false, maxGB: 0 }; // maxGB 0 = no size limit
-let history = []; // completed downloads, newest first
-let persistTimer, histPersistTimer;
+let S = { media: {}, jobs: {}, seq: 0, dl: {}, queue: [] };
+const DEFAULTS = { auto: false, concurrency: 6, maxParallel: 2, saveAs: false, maxGB: 0, notify: true, history: true, theme: 'auto', lang: 'auto', template: DEFAULT_TEMPLATE }; // maxGB 0 = no size limit
+const settings = { ...DEFAULTS };
+let history = [];
 const ready = (async () => {
   try { const s = await api.storage.session.get('state'); if (s.state) S = { ...S, ...s.state }; } catch { /* session storage unavailable */ }
-  try {
-    const l = await api.storage.local.get(['settings', 'history']);
-    Object.assign(settings, l.settings || {});
-    if (Array.isArray(l.history)) history = l.history;
-  } catch { /* ignore */ }
+  try { const l = await api.storage.local.get(['settings', 'history']); Object.assign(settings, l.settings || {}); history = l.history || []; } catch { /* ignore */ }
 })();
+let persistTimer;
 const persist = () => { clearTimeout(persistTimer); persistTimer = setTimeout(() => api.storage.session.set({ state: S }).catch(() => {}), 150); };
-const HIST_MAX = 200; // hard cap so storage.local can never fill with old entries
-const persistHistory = () => {
-  clearTimeout(histPersistTimer);
-  histPersistTimer = setTimeout(() => api.storage.local.set({ history }).catch(() => {}), 300);
-};
-const histUnshift = (e) => { history.unshift(e); if (history.length > HIST_MAX) history = history.slice(0, HIST_MAX); persistHistory(); };
-const histFind = (id) => history.find((h) => h.id === id);
 
 // ---------- helpers ----------
 const SEGMENT_EXT = /\.(ts|m4s|m4f|cmfv|cmfa|aac|vtt|webvtt|key|jpg|jpeg|png|gif|webp|svg|ico|js|css|json|html?)$/i;
@@ -66,12 +57,9 @@ async function addCandidate({ tabId, url, kind, size, ct, pageUrl }) {
   const item = { id: `m${++S.seq}`, url, kind, size: size || 0, ct: ct || '', pageUrl: pageUrl || '', title, t: Date.now(), state: kind === 'file' ? 'ready' : 'analyzing', options: [], hidden: false };
   te.items.push(item); persist(); updateBadge(tabId);
   if (item.kind === 'file') { maybeAuto(tabId, item); return; }
-
   const rid = await addHeaderRule(item.pageUrl);
-
   try {
     const a = await analyzeManifest(url);
-
     item.kind = a.kind; item.options = a.options; item.problem = a.problem; item.duration = a.duration; item.live = a.live; item.isMaster = a.isMaster;
     item.state = 'ready';
     if (a.childUrls) for (const other of te.items) if (a.childUrls.includes(other.url)) other.hidden = true; // variant playlists of this master
@@ -109,6 +97,7 @@ api.tabs.onUpdated.addListener(async (tabId, info) => { // full navigation => fo
 api.tabs.onRemoved.addListener(async (tabId) => { await ready; delete S.media[tabId]; persist(); });
 
 // ---------- downloads ----------
+const T = () => makeT(settings.lang);
 const asciiName = (n) => n.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]+/g, '_');
 /** downloads.download with a fallback to an ASCII-only filename (some Linux locales reject non-ASCII names). */
 async function saveFile(opts) {
@@ -119,133 +108,123 @@ async function saveFile(opts) {
 }
 const findItem = (itemId) => { for (const [tabId, te] of Object.entries(S.media)) { const it = te.items.find((i) => i.id === itemId); if (it) return { tabId: +tabId, item: it }; } return null; };
 const setJob = (job, patch) => { Object.assign(job, patch); persist(); };
-/** Creates a job and registers it; `extra` carries provenance used for the history entry. */
-function makeJob(base, extra = {}) {
-  const job = { id: `j${++S.seq}`, status: 'running', phase: 'download', pct: 0, bytes: 0, error: '', t: Date.now(), ...base, ...extra };
-  S.jobs[job.id] = job; persist();
-  return job;
-}
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
-async function ensureOffscreen() { // Chrome runs the engine in an offscreen document
+async function ensureOffscreen() {
   const ctx = await api.runtime.getContexts?.({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
   if (ctx?.length) return;
   await api.offscreen.createDocument({ url: 'engine.html', reasons: ['BLOBS'], justification: 'Assemble downloaded video segments into one MP4 file' });
 }
 async function engineSend(msg) {
-  if (__FIREFOX__) {
-    const h = await import('./engine-host.js'); // Firefox: the engine lives in the background itself
-    if (msg.type === 'start') h.startJob(msg.job, onEngineMsg);
-    else if (msg.type === 'cancel') h.cancelJob(msg.jobId);
-    else if (msg.type === 'revoke') h.revoke(msg.url);
-    return;
-  }
+  if (__FIREFOX__) { const h = await import('./engine-host.js'); if (msg.type === 'start') h.startJob(msg.job, onEngineMsg); else if (msg.type === 'cancel') h.cancelJob(msg.jobId); else if (msg.type === 'revoke') h.revoke(msg.url); return; }
   await ensureOffscreen();
   await api.runtime.sendMessage({ target: 'engine', ...msg });
 }
 
-async function startDownload({ tabId, itemId, optionId = '0' }) {
+// ----- history -----
+const saveHistory = () => api.storage.local.set({ history }).catch(() => {});
+function addHistory(job) {
+  if (!settings.history || job.status === 'cancelled') return;
+  history.unshift({ id: `${job.id}-${job.t}`, title: job.title, site: job.site, pageUrl: job.pageUrl, url: job.url, kind: job.kind, quality: job.quality, mode: job.mode, ext: job.ext, size: job.size || 0, duration: job.duration || 0, date: Date.now(), status: job.status, error: job.error || '', downloadId: job.downloadId ?? null, filename: job.filename, thumb: job.thumb || '' });
+  history = history.slice(0, 500); saveHistory();
+}
+
+// ----- notifications -----
+function notify(job) {
+  if (!settings.notify || !api.notifications || job.status === 'cancelled') return;
+  const t = T();
+  try {
+    api.notifications.create(`sg-${job.id}`, { type: 'basic', iconUrl: api.runtime.getURL('icons/icon128.png'), title: t(job.status === 'done' ? 'notifDone' : 'notifError'), message: job.status === 'done' ? job.filename : `${job.title}: ${job.error.startsWith('SIZE_LIMIT') ? t('limitHit') : job.error}` });
+  } catch { /* notifications unavailable */ }
+}
+api.notifications?.onClicked.addListener(async (id) => {
+  await ready; const job = S.jobs[id.replace(/^sg-/, '')];
+  if (job?.downloadId != null) try { api.downloads.show(job.downloadId); } catch { /* ignore */ }
+});
+
+// ----- queue -----
+const active = () => Object.values(S.jobs).filter((j) => j.status === 'running' || j.status === 'muxing').length;
+function pump() {
+  while (S.queue.length && active() < settings.maxParallel) {
+    const job = S.queue.shift(); if (S.jobs[job]) launch(S.jobs[job]);
+  }
+  persist();
+}
+function finishJob(job, status, error = '') {
+  if (job.finished) return;
+  job.finished = true; setJob(job, { status, error, endedAt: Date.now() });
+  removeHeaderRule(job.rule); addHistory(job); notify(job); pump();
+}
+
+async function startDownload({ tabId, itemId, optionId = '0', mode = 'both', thumb = '' }) {
   await ready;
   const f = findItem(itemId); if (!f) return { error: 'not-found' };
   const { item } = f;
+  if (item.jobId && ['queued', 'running', 'muxing', 'saving'].includes(S.jobs[item.jobId]?.status)) return { jobId: item.jobId };
   let title = item.title; try { title = (await api.tabs.get(tabId ?? f.tabId)).title || title; } catch { /* ignore */ }
   const opt = item.options.find((o) => o.id === String(optionId));
-  const base = sanitizeFilename(title || new URL(item.url).hostname);
-  const meta = { itemKind: item.kind, srcUrl: item.url, pageUrl: item.pageUrl, options: item.options, page: item.title };
-  if (item.kind === 'file') {
-    const ext = (/\.([a-z0-9]{2,4})(?:$|\?)/i.exec(new URL(item.url).pathname)?.[1]) || 'mp4';
-    const job = makeJob({ tabId: f.tabId, itemId, title: base, quality: '', filename: `${base}.${ext}` }, meta);
-    item.jobId = job.id; persist();
-    job.rule = await addHeaderRule(item.pageUrl);
-    try {
-      const id = await saveFile({ url: item.url, filename: `${base}.${ext}`, saveAs: settings.saveAs, conflictAction: 'uniquify' });
-      S.dl[id] = job.id; setJob(job, { status: 'saving', phase: 'save' });
-    } catch (e) { setJob(job, { status: 'error', error: e.message }); removeHeaderRule(job.rule); }
-    return { jobId: job.id };
-  }
-  const job = makeJob({ tabId: f.tabId, itemId, title: base, quality: opt?.label || '', filename: `${base}${opt?.height ? ` [${opt.height}p]` : ''}.mp4` }, { ...meta, optionId: String(optionId) });
-  item.jobId = job.id; persist();
-  job.rule = await addHeaderRule(item.pageUrl);
-  engineSend({ type: 'start', job: { jobId: job.id, url: item.url, kind: item.kind, optionId: String(optionId), concurrency: settings.concurrency, maxBytes: settings.maxGB ? Math.round(settings.maxGB * 1024 ** 3) : 0 } }).catch((e) => onEngineMsg({ type: 'error', jobId: job.id, message: e.message }));
+  const audio = mode === 'audio' && item.kind !== 'file';
+  let ext = item.kind === 'file' ? ((/\.([a-z0-9]{2,4})(?:$|\?)/i.exec(new URL(item.url).pathname)?.[1]) || 'mp4') : audio ? 'm4a' : 'mp4';
+  const quality = audio ? 'audio' : opt?.height ? `${opt.height}p` : '';
+  const filename = formatName(settings.template, { title: title || hostOf(item.url), quality, site: hostOf(item.pageUrl || item.url), kind: item.kind }, ext);
+  const job = { id: `j${++S.seq}`, itemId, tabId: f.tabId, title: filename.replace(/\.[^.]+$/, ''), filename, ext, mode: audio ? 'audio' : 'both', status: 'queued', phase: 'download', pct: 0, bytes: 0, speed: 0, eta: null, quality: audio ? 'audio' : (opt?.height ? `${opt.height}p` : ''), error: '', t: Date.now(), url: item.url, kind: item.kind, pageUrl: item.pageUrl, site: hostOf(item.pageUrl || item.url), thumb, duration: item.duration || 0, optionId: String(optionId) };
+  S.jobs[job.id] = job; item.jobId = job.id; S.queue.push(job.id); persist();
+  pump();
   return { jobId: job.id };
 }
 
-/** Re-download from the history: validates the manifest again (it may have changed), then runs a normal job. */
-async function startHistDownload({ histId, optionId = '0' }) {
-  await ready;
-  const e = histFind(histId); if (!e) return { error: 'not-found' };
-  if (e.kind === 'file') {
-    const base = sanitizeFilename(e.title || new URL(e.srcUrl || 'x://v').hostname);
-    const job = makeJob({ histId, title: base, quality: e.quality || '', filename: e.filename, itemKind: 'file', srcUrl: e.srcUrl, pageUrl: e.pageUrl });
-    job.rule = await addHeaderRule(e.pageUrl);
+async function launch(job) {
+  Object.assign(job, { status: 'running', startedAt: Date.now() }); persist();
+  job.rule = await addHeaderRule(job.pageUrl);
+  if (job.kind === 'file') {
     try {
-      const id = await saveFile({ url: e.srcUrl, filename: e.filename, saveAs: settings.saveAs, conflictAction: 'uniquify' });
-      S.dl[id] = job.id; setJob(job, { status: 'saving', phase: 'save' });
-    } catch (err) { setJob(job, { status: 'error', error: String(err?.message || err) }); removeHeaderRule(job.rule); }
-    return { jobId: job.id };
+      const id = await saveFile({ url: job.url, filename: job.filename, saveAs: settings.saveAs, conflictAction: 'uniquify' });
+      S.dl[id] = job.id; job.downloadId = id; setJob(job, { status: 'saving', phase: 'save' });
+    } catch (e) { finishJob(job, 'error', e.message); }
+    return;
   }
-  let options = [];
-  try {
-    const a = await analyzeManifest(e.srcUrl);
-    if (a.problem) return { error: a.problem };
-    options = a.options;
-  } catch { return { error: 'manifest-unavailable' }; } // manifest no longer reachable?
-  const want = String(optionId ?? e.optionId ?? '0'); // the caller's choice wins over the recorded one
-  const optId = options.some((o) => o.id === want) ? want : '0';
-  const opt = options.find((o) => o.id === optId);
-  const base = sanitizeFilename(e.title || 'video');
-  const job = makeJob({ histId, title: base, quality: opt?.label || '', filename: `${base}${opt?.height ? ` [${opt.height}p]` : ''}.mp4`, itemKind: e.kind, srcUrl: e.srcUrl, pageUrl: e.pageUrl, options, optionId: optId });
-  job.rule = await addHeaderRule(e.pageUrl);
-  engineSend({ type: 'start', job: { jobId: job.id, url: e.srcUrl, kind: e.kind, optionId: optId, concurrency: settings.concurrency, maxBytes: settings.maxGB ? Math.round(settings.maxGB * 1024 ** 3) : 0 } }).catch((err) => onEngineMsg({ type: 'error', jobId: job.id, message: String(err?.message || err) }));
-  return { jobId: job.id };
+  engineSend({ type: 'start', job: { jobId: job.id, url: job.url, kind: job.kind, optionId: job.optionId, mode: job.mode, concurrency: settings.concurrency, maxBytes: settings.maxGB ? Math.round(settings.maxGB * 1024 ** 3) : 0 } })
+    .catch((e) => onEngineMsg({ type: 'error', jobId: job.id, message: e.message }));
 }
 
 async function onEngineMsg(m) {
   await ready;
   const job = S.jobs[m.jobId]; if (!job) return;
-  if (m.type === 'progress') setJob(job, { phase: m.phase, pct: m.total ? Math.round((m.done / m.total) * 100) : 0, bytes: m.bytes, status: m.phase === 'mux' ? 'muxing' : 'running' });
-  else if (m.type === 'done') {
-    setJob(job, { status: 'saving', phase: 'save', pct: 100, size: m.size });
+  if (m.type === 'progress') {
+    const el = Math.max(0.001, (Date.now() - job.startedAt) / 1000);
+    setJob(job, { phase: m.phase, pct: m.total ? Math.round((m.done / m.total) * 100) : 0, bytes: m.bytes, speed: m.bytes / el, eta: m.done > 0 && m.phase === 'download' ? Math.round(el * (m.total - m.done) / m.done) : null, status: m.phase === 'mux' ? 'muxing' : 'running' });
+  } else if (m.type === 'done') {
+    setJob(job, { status: 'saving', phase: 'save', pct: 100, size: m.size, eta: null, speed: 0 }); pump();
     try {
       const id = await saveFile({ url: m.blobUrl, filename: job.filename, saveAs: settings.saveAs, conflictAction: 'uniquify' });
-      S.dl[id] = job.id; job.blobUrl = m.blobUrl; persist();
-    } catch (e) { setJob(job, { status: 'error', error: e.message }); engineSend({ type: 'revoke', url: m.blobUrl }); removeHeaderRule(job.rule); }
-  } else if (m.type === 'error') { setJob(job, { status: 'error', error: m.message }); removeHeaderRule(job.rule); }
-  else if (m.type === 'cancelled') { setJob(job, { status: 'cancelled' }); removeHeaderRule(job.rule); }
-}
-
-/** Adds a completed download to the history (only when the browser confirmed the file). */
-async function recordHistory(job, dlId) {
-  if (!job.filename) return;
-  try {
-    const d = await api.downloads.search({ id: dlId }).catch(() => []);
-    if (!d[0]) return;
-    histUnshift({
-      id: `h${++S.seq}`,
-      fin: Date.now(),
-      title: job.title, filename: String(job.filename).split('/').pop(), quality: job.quality || '',
-      kind: job.itemKind || '', size: d[0].fileSize || job.size || 0,
-      srcUrl: job.srcUrl || '', pageUrl: job.pageUrl || '', page: job.page || '',
-      options: job.options || [], optionId: job.optionId || '',
-      dlId,
-    });
-  } catch { /* history is best-effort */ }
+      S.dl[id] = job.id; job.blobUrl = m.blobUrl; job.downloadId = id; persist();
+    } catch (e) { engineSend({ type: 'revoke', url: m.blobUrl }); finishJob(job, 'error', e.message); }
+  } else if (m.type === 'error') finishJob(job, 'error', m.message === 'NO_AUDIO' ? T()('noAudio') : m.message);
+  else if (m.type === 'cancelled') finishJob(job, 'cancelled');
 }
 
 api.downloads.onChanged.addListener(async (delta) => {
   await ready;
   const jobId = S.dl[delta.id]; const job = jobId && S.jobs[jobId]; if (!job) return;
   const st = delta.state?.current; if (!st || st === 'in_progress') return;
-  if (st === 'complete') {
-    setJob(job, { status: 'done' });
-    recordHistory(job, delta.id);
-  } else {
-    setJob(job, { status: 'error', error: delta.error?.current || 'download interrupted' });
-  }
   if (job.blobUrl) engineSend({ type: 'revoke', url: job.blobUrl });
-  removeHeaderRule(job.rule); delete S.dl[delta.id]; persist();
+  delete S.dl[delta.id];
+  if (st === 'complete') {
+    try { const [d] = await api.downloads.search({ id: delta.id }); if (d && !job.size) job.size = d.fileSize || d.totalBytes || 0; } catch { /* ignore */ }
+    finishJob(job, 'done');
+  } else finishJob(job, 'error', delta.error?.current || 'download interrupted');
 });
 
 // ---------- messaging ----------
+async function historyView() {
+  const list = history.slice(0, 300);
+  await Promise.all(list.slice(0, 80).map(async (h) => {
+    h.exists = true;
+    if (h.status === 'done' && h.downloadId != null) { try { const [d] = await api.downloads.search({ id: h.downloadId }); h.exists = !!d && d.exists !== false; } catch { h.exists = false; } }
+  }));
+  return list;
+}
+const SETTING_KEYS = Object.keys(DEFAULTS);
 api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.target === 'engine') return false;
   (async () => {
@@ -255,27 +234,33 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'blob': { if (sender.tab) { tabEntry(sender.tab.id).blob = true; persist(); } return sendResponse({}); }
       case 'getState': {
         const te = S.media[msg.tabId] || { items: [], blob: false };
-        const items = te.items.filter((i) => !i.hidden).map(({ childUrls, ...i }) => ({ ...i, job: i.jobId ? S.jobs[i.jobId] : null }));
-        return sendResponse({ items, blob: te.blob, settings });
+        const items = te.items.filter((i) => !i.hidden).map(({ childUrls, ...i }) => ({ ...i, job: i.jobId ? S.jobs[i.jobId] : null })).reverse();
+        const queue = Object.values(S.jobs).filter((j) => ['queued', 'running', 'muxing', 'saving'].includes(j.status)).length;
+        return sendResponse({ items, blob: te.blob, settings, activeJobs: queue, historyCount: history.length });
       }
       case 'download': return sendResponse(await startDownload(msg));
-      case 'cancel': { const job = S.jobs[msg.jobId]; if (job) { engineSend({ type: 'cancel', jobId: job.id }); } return sendResponse({}); }
-      case 'clear': { delete S.media[msg.tabId]; persist(); updateBadge(msg.tabId); return sendResponse({}); }
-      case 'setSettings': { Object.assign(settings, msg.settings); await api.storage.local.set({ settings }); return sendResponse(settings); }
-      case 'getHistory': {
-        const stats = history.reduce((a, e) => { a.count++; a.bytes += e.size || 0; return a; }, { count: 0, bytes: 0 });
-        const jobs = Object.values(S.jobs).filter((j) => j.histId);
-        return sendResponse({ items: history, stats, jobs });
+      case 'downloadAll': {
+        const te = S.media[msg.tabId]; let n = 0;
+        for (const it of te?.items || []) if (!it.hidden && !it.problem && !it.live && it.state === 'ready' && !(it.jobId && ['queued', 'running', 'muxing', 'saving', 'done'].includes(S.jobs[it.jobId]?.status))) { await startDownload({ tabId: msg.tabId, itemId: it.id, optionId: '0', thumb: msg.thumb }); n++; }
+        return sendResponse({ started: n });
       }
-      case 'histDownload': return sendResponse(await startHistDownload(msg));
-      case 'histRemove': { const h = histFind(msg.histId); if (h) { history = history.filter((x) => x !== h); persistHistory(); } return sendResponse({}); }
-      case 'histClear': { history = []; persistHistory(); return sendResponse({}); }
-      case 'openFile': {
-        try { await api.downloads.open(+msg.dlId); } catch { try { await api.downloads.show(+msg.dlId); } catch { try { await api.downloads.showDefaultFolder(); } catch { /* nothing more we can do */ } } }
+      case 'cancel': {
+        const job = S.jobs[msg.jobId]; if (!job) return sendResponse({});
+        if (job.status === 'queued') { S.queue = S.queue.filter((x) => x !== job.id); finishJob(job, 'cancelled'); } else engineSend({ type: 'cancel', jobId: job.id });
         return sendResponse({});
       }
-      case 'showFile': { try { await api.downloads.show(+msg.dlId); } catch { try { await api.downloads.showDefaultFolder(); } catch { /* ignore */ } } return sendResponse({}); }
-      case 'rescan': return sendResponse({});
+      case 'clear': { delete S.media[msg.tabId]; persist(); updateBadge(msg.tabId); return sendResponse({}); }
+      case 'setSettings': {
+        for (const k of SETTING_KEYS) if (k in (msg.settings || {})) settings[k] = msg.settings[k];
+        settings.maxParallel = Math.min(4, Math.max(1, +settings.maxParallel || 2)); settings.concurrency = Math.min(16, Math.max(1, +settings.concurrency || 6));
+        if (!String(settings.template || '').trim()) settings.template = DEFAULT_TEMPLATE;
+        await api.storage.local.set({ settings }); pump(); return sendResponse(settings);
+      }
+      case 'getHistory': return sendResponse({ history: await historyView() });
+      case 'historyDelete': { history = history.filter((h) => h.id !== msg.id); saveHistory(); return sendResponse({}); }
+      case 'historyClear': { history = []; saveHistory(); return sendResponse({}); }
+      case 'historyShow': { try { api.downloads.show(msg.downloadId); } catch { /* ignore */ } return sendResponse({}); }
+      case 'openUrl': { if (/^https?:/i.test(msg.url || '')) api.tabs.create({ url: msg.url }); return sendResponse({}); }
       default:
         if (msg?.target === 'bg') { await onEngineMsg(msg); }
         return sendResponse({});

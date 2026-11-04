@@ -2,12 +2,12 @@
 import { downloadStream } from './core/download.js';
 
 const jobs = new Map();
-export async function startJob({ jobId, url, kind, optionId, concurrency, maxBytes }, emit) {
+export async function startJob({ jobId, url, kind, optionId, concurrency, maxBytes, mode }, emit) {
   const ac = new AbortController(); jobs.set(jobId, ac);
   let last = 0;
   try {
     const r = await downloadStream(url, {
-      kind, optionId, concurrency, maxBytes, signal: ac.signal,
+      kind, optionId, concurrency, maxBytes, mode, signal: ac.signal,
       onProgress: (p) => { const n = Date.now(); if (n - last > 250 || p.phase === 'mux') { last = n; emit({ type: 'progress', jobId, ...p }); } },
     });
     emit({ type: 'done', jobId, blobUrl: URL.createObjectURL(r.blob), size: r.size, duration: r.duration });
